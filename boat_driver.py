@@ -3,7 +3,8 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
-from customgps.msg import Customgps
+from sensor_msgs.msg import NavSatFix
+import utm
 from datetime import datetime
 import csv
 import os
@@ -35,9 +36,9 @@ class BoatMeasurementDriver(Node):
             10
         )
         
-        # Subscribe to GPS data
+        # Subscribe to GPS data (now using standard NavSatFix)
         self.gps_sub = self.create_subscription(
-            Customgps,
+            NavSatFix,
             '/gps_data',
             self.gps_callback,
             10
@@ -78,13 +79,28 @@ class BoatMeasurementDriver(Node):
                     latitude = self.latest_gps.latitude
                     longitude = self.latest_gps.longitude
                     altitude = self.latest_gps.altitude
-                    utm_easting = self.latest_gps.utm_easting
-                    utm_northing = self.latest_gps.utm_northing
-                    hdop = self.latest_gps.hdop
+                    
+                    # Calculate UTM from lat/lon
+                    try:
+                        utm_vals = utm.from_latlon(latitude, longitude)
+                        utm_easting = utm_vals[0]
+                        utm_northing = utm_vals[1]
+                        utm_zone = utm_vals[2]
+                        utm_letter = utm_vals[3]
+                    except:
+                        utm_easting = utm_northing = 0.0
+                        utm_zone = 0
+                        utm_letter = ''
+                    
+                    # Estimate HDOP from covariance
+                    position_std = (self.latest_gps.position_covariance[0]) ** 0.5
+                    hdop = position_std / 5.0  # Rough inverse of earlier conversion
                 else:
                     # No GPS fix yet
                     latitude = longitude = altitude = 0.0
                     utm_easting = utm_northing = hdop = 0.0
+                    utm_zone = 0
+                    utm_letter = ''
             
             # Write to CSV
             self.csv_writer.writerow([
@@ -96,6 +112,8 @@ class BoatMeasurementDriver(Node):
                 f'{altitude:.2f}',
                 f'{utm_easting:.2f}',
                 f'{utm_northing:.2f}',
+                f'{utm_zone}',
+                f'{utm_letter}',
                 f'{hdop:.2f}'
             ])
             self.csv_file.flush()  # Ensure data is written immediately
@@ -148,6 +166,8 @@ class BoatMeasurementDriver(Node):
                 'Altitude_m',
                 'UTM_Easting',
                 'UTM_Northing',
+                'UTM_Zone',
+                'UTM_Letter',
                 'HDOP'
             ])
             self.csv_file.flush()
